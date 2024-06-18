@@ -1,4 +1,0 @@
-compressai
-==========
-.. automodule:: compressai
-   :members:

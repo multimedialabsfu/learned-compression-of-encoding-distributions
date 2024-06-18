@@ -31,14 +31,12 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from torch import Tensor
 
+import compressai.latent_codecs.entropy_bottleneck
 from compressai.entropy_models import EntropyBottleneck
+from compressai.latent_codecs.base import LatentCodec
 from compressai.registry import register_module
 
-from .base import LatentCodec
-
-__all__ = [
-    "EntropyBottleneckLatentCodec",
-]
+# NOTE: The only modification is the addition of `dims`.
 
 
 @register_module("EntropyBottleneckLatentCodec")
@@ -87,3 +85,8 @@ class EntropyBottleneckLatentCodec(LatentCodec):
         (y_strings,) = strings
         y_hat = self.entropy_bottleneck.decompress(y_strings, shape)
         return {"y_hat": y_hat}
+
+
+compressai.latent_codecs.entropy_bottleneck.EntropyBottleneckLatentCodec = (
+    EntropyBottleneckLatentCodec
+)

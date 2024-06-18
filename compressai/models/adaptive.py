@@ -6,12 +6,15 @@ import torch.nn as nn
 from compressai.entropy_models.entropy_models import EntropyBottleneck, pdf_layout
 from compressai.latent_codecs import LatentCodec
 from compressai.layers import UniformHistogram
+from compressai.models.base import CompressionModel
+from compressai.models.google import (
+    FactorizedPrior,
+    MeanScaleHyperprior,
+    ScaleHyperprior,
+)
 from compressai.ops import RangeBound
 from compressai.registry import register_model, register_module
 from compressai.registry.torch import MODELS
-
-from .base import CompressionModel
-from .google import FactorizedPrior, MeanScaleHyperprior, ScaleHyperprior
 
 
 class FreezeMixin:
