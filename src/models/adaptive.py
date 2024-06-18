@@ -2,19 +2,20 @@ from contextlib import contextmanager
 
 import torch
 import torch.nn as nn
-
-from compressai.entropy_models.entropy_models import EntropyBottleneck, pdf_layout
+from compressai.entropy_models.entropy_models import EntropyBottleneck
 from compressai.latent_codecs import LatentCodec
-from compressai.layers import UniformHistogram
 from compressai.models.base import CompressionModel
 from compressai.models.google import (
     FactorizedPrior,
     MeanScaleHyperprior,
     ScaleHyperprior,
 )
-from compressai.ops import RangeBound
 from compressai.registry import register_model, register_module
 from compressai.registry.torch import MODELS
+
+from src.entropy_models.entropy_models import pdf_layout
+from src.layers import UniformHistogram
+from src.ops import RangeBound
 
 
 class FreezeMixin:
