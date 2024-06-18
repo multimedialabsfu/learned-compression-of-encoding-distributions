@@ -35,7 +35,6 @@ import torch.nn.functional as F
 
 from compressai.ans import BufferedRansEncoder, RansDecoder
 from compressai.entropy_models import EntropyBottleneck, GaussianConditional
-from compressai.entropy_models.entropy_models import DiscreteEntropyBottleneck
 from compressai.layers import GDN, MaskedConv2d
 from compressai.registry import register_model
 
@@ -162,14 +161,6 @@ class FactorizedPrior(CompressionModel):
         y_hat = self.entropy_bottleneck.decompress(strings[0], shape)
         x_hat = self.g_s(y_hat).clamp_(0, 1)
         return {"x_hat": x_hat}
-
-
-@register_model("bmshj2018-factorized-discrete-eb")
-class FactorizedPriorDiscreteEB(FactorizedPrior):
-    def __init__(self, N, M, **kwargs):
-        super().__init__(N=N, M=M, **kwargs)
-
-        self.entropy_bottleneck = DiscreteEntropyBottleneck(M)
 
 
 @register_model("bmshj2018-factorized-relu")

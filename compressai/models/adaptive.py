@@ -3,11 +3,7 @@ from contextlib import contextmanager
 import torch
 import torch.nn as nn
 
-from compressai.entropy_models.entropy_models import (
-    DiscreteEntropyBottleneck,
-    EntropyBottleneck,
-    pdf_layout,
-)
+from compressai.entropy_models.entropy_models import EntropyBottleneck, pdf_layout
 from compressai.latent_codecs import LatentCodec
 from compressai.layers import UniformHistogram
 from compressai.ops import RangeBound
@@ -414,14 +410,6 @@ class AdaptiveFactorizedPrior(FactorizedPrior, AdaptiveMixin):
         y_hat = out_pdf["y_hat"]
         x_hat = self.g_s(y_hat).clamp_(0, 1)
         return {"x_hat": x_hat}
-
-
-@register_model("bmshj2018-factorized-pdf-discrete-eb")
-class AdaptiveFactorizedPrior(AdaptiveFactorizedPrior):
-    def __init__(self, N: int, M: int, **kwargs):
-        FactorizedPrior.__init__(self, N=N, M=M)
-        self.entropy_bottleneck = DiscreteEntropyBottleneck(M)
-        AdaptiveMixin.__init__(self, **kwargs)
 
 
 @register_model("bmshj2018-hyperprior-pdf")
