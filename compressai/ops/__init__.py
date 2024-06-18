@@ -27,7 +27,7 @@
 # OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-from .bound_ops import LowerBound
+from .bound_ops import LowerBound, RangeBound
 from .ops import compute_padding, quantize_ste
 from .parametrizers import NonNegativeParametrizer
 
@@ -36,4 +36,5 @@ __all__ = [
     "quantize_ste",
     "LowerBound",
     "NonNegativeParametrizer",
+    "RangeBound",
 ]

@@ -74,7 +74,7 @@ def parse_json_file(filepath, metric):
 
         return {
             "name": data.get("name", name),
-            "xs": results["bpp"],
+            "xs": results["bpp_loss"],
             "ys": results[metric],
         }
     except KeyError:
@@ -90,15 +90,20 @@ def matplotlib_plt(
         figsize = (9, 6)
     fig, ax = plt.subplots(figsize=figsize)
     for sc in scatters:
+        kwargs = {"marker": "."}
         if any(x in sc["name"] for x in hybrid_matches):
             linestyle = "--"
+        if "ideal" in sc["name"]:
+            linestyle = "--"
+            kwargs["marker"] = None
+            kwargs["color"] = "dimgrey"
         ax.plot(
             sc["xs"],
             sc["ys"],
-            marker=".",
             linestyle=linestyle,
             linewidth=0.7,
             label=sc["name"],
+            **kwargs,
         )
 
     ax.set_xlabel("Bit-rate [bpp]")

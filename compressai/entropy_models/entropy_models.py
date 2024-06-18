@@ -27,6 +27,7 @@
 # OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import math
 import warnings
 
 from typing import Any, Callable, List, Optional, Tuple, Union
@@ -40,7 +41,9 @@ import torch.nn.functional as F
 from torch import Tensor
 
 from compressai._CXX import pmf_to_quantized_cdf as _pmf_to_quantized_cdf
+from compressai.layers.hist import DiscreteIndexing
 from compressai.ops import LowerBound
+from compressai.ops.bound_ops import RangeBound
 
 
 class _EntropyCoder:
@@ -392,6 +395,8 @@ class EntropyBottleneck(EntropyModel):
         if self._offset.numel() > 0 and not force:
             return False
 
+        self._update_quantiles()
+
         medians = self.quantiles[:, 0, 1]
 
         minima = medians - self.quantiles[:, 0, 0]
@@ -521,6 +526,35 @@ class EntropyBottleneck(EntropyModel):
     def _extend_ndims(tensor, n):
         return tensor.reshape(-1, *([1] * n)) if n > 0 else tensor.reshape(-1)
 
+    @torch.no_grad()
+    def _update_quantiles(self, search_radius=1e4, rtol=1e-4, atol=1e-3):
+        device = self.quantiles.device
+        shape = (self.channels, 1, 1)
+        low = torch.full(shape, -search_radius, device=device)
+        high = torch.full(shape, search_radius, device=device)
+
+        def f(y, self=self):
+            return self._logits_cumulative(y, stop_gradient=True)
+
+        for i in range(len(self.target)):
+            q_i = self._search_target(f, self.target[i], low, high, rtol, atol)
+            self.quantiles[:, :, i] = q_i[:, :, 0]
+
+    @staticmethod
+    def _search_target(f, target, low, high, rtol=1e-4, atol=1e-3, strict=False):
+        assert (low <= high).all()
+        if strict:
+            assert ((f(low) <= target) & (target <= f(high))).all()
+        else:
+            low = torch.where(target <= f(high), low, high)
+            high = torch.where(f(low) <= target, high, low)
+        while not torch.isclose(low, high, rtol=rtol, atol=atol).all():
+            mid = (low + high) / 2
+            f_mid = f(mid)
+            low = torch.where(f_mid <= target, mid, low)
+            high = torch.where(f_mid >= target, mid, high)
+        return (low + high) / 2
+
     def compress(self, x):
         indexes = self._build_indexes(x.size())
         medians = self._get_medians().detach()
@@ -535,6 +569,220 @@ class EntropyBottleneck(EntropyModel):
         medians = self._extend_ndims(self._get_medians().detach(), len(size))
         medians = medians.expand(len(strings), *([-1] * (len(size) + 1)))
         return super().decompress(strings, indexes, medians.dtype, medians)
+
+
+class SlightlyMoreGeneralizedEntropyBottleneck(EntropyBottleneck):
+    """A slightly more generalized ``EntropyBottleneck``.
+
+    The only differences:
+
+    - ``continuous`` argument for ``_logits_cumulative``
+    """
+
+    def _logits_cumulative(
+        self, inputs: Tensor, stop_gradient: bool = False, continuous=None
+    ):
+        if continuous is None:
+            continuous = self.continuous_default
+        if continuous:
+            return self._logits_cumulative_continuous(inputs, stop_gradient)
+        else:
+            return self._logits_cumulative_discrete(inputs, stop_gradient)
+
+    def _logits_cumulative_continuous(self, *args, **kwargs):
+        return EntropyBottleneck._logits_cumulative(self, *args, **kwargs)
+
+    @torch.jit.unused
+    def _likelihood(
+        self, inputs: Tensor, stop_gradient: bool = False, continuous=None
+    ) -> Tuple[Tensor, Tensor, Tensor]:
+        half = float(0.5)
+        lower = self._logits_cumulative(
+            inputs - half, stop_gradient=stop_gradient, continuous=continuous
+        )
+        upper = self._logits_cumulative(
+            inputs + half, stop_gradient=stop_gradient, continuous=continuous
+        )
+        likelihood = torch.sigmoid(upper) - torch.sigmoid(lower)
+        if self.use_likelihood_bound:
+            likelihood = self.likelihood_lower_bound(likelihood)
+        return likelihood, lower, upper
+
+    def forward(
+        self, x: Tensor, training: Optional[bool] = None, continuous=None
+    ) -> Tuple[Tensor, Tensor]:
+        if training is None:
+            training = self.training
+
+        if not torch.jit.is_scripting():
+            # x from B x C x ... to C x B x ...
+            perm = np.arange(len(x.shape))
+            perm[0], perm[1] = perm[1], perm[0]
+            # Compute inverse permutation
+            inv_perm = np.arange(len(x.shape))[np.argsort(perm)]
+        else:
+            raise NotImplementedError()
+            # TorchScript in 2D for static inference
+            # Convert to (channels, ... , batch) format
+            # perm = (1, 2, 3, 0)
+            # inv_perm = (3, 0, 1, 2)
+
+        x = x.permute(*perm).contiguous()
+        shape = x.size()
+        values = x.reshape(x.size(0), 1, -1)
+
+        # Add noise or quantize
+
+        outputs = self.quantize(
+            values, "noise" if training else "dequantize", self._get_medians()
+        )
+
+        if not torch.jit.is_scripting():
+            likelihood, _, _ = self._likelihood(outputs, continuous=continuous)
+            # NOTE: This has been moved to the _likelihood function.
+            # if self.use_likelihood_bound:
+            #     likelihood = self.likelihood_lower_bound(likelihood)
+        else:
+            raise NotImplementedError()
+            # TorchScript not yet supported
+            # likelihood = torch.zeros_like(outputs)
+
+        # Convert back to input tensor shape
+        outputs = outputs.reshape(shape)
+        outputs = outputs.permute(*inv_perm).contiguous()
+
+        likelihood = likelihood.reshape(shape)
+        likelihood = likelihood.permute(*inv_perm).contiguous()
+
+        return outputs, likelihood
+
+
+class DiscreteEntropyBottleneck(SlightlyMoreGeneralizedEntropyBottleneck):
+    continuous_default: bool = False
+
+    # Possible distribution modeling methods to consider:
+    # - logits cumulative table (non-decreasing)
+    # - cdf table (bounded [0, 1], non-negativity, non-decreasing)
+    # - pdf table (bounded [0, 1], non-negativity)
+    #
+    # Methods for enforcement:
+    # - bounded: sigmoid, tanh
+    # - non-decreasing: cumsum, lower bound y[i] by y[i-1] via detached max
+    # - non-negativity: softplus (soft relu), sigmoid
+    #
+    # Ballé 2018 enforces (almost?) non-decreasing logits via tanh,
+    # and non-negativity via softplus of the H matrix, I believe.
+
+    def __init__(
+        self,
+        channels: int,
+        *args: Any,
+        tail_mass: float = 1e-9,
+        init_scale: float = 10,
+        filters: Tuple[int, ...] = (3, 3, 3, 3),
+        num_symbols: int = 255,
+        sample_rate: int = 4,
+        init_scale_gamma: float = 4,
+        **kwargs: Any,
+    ):
+        super().__init__(
+            channels,
+            *args,
+            tail_mass=tail_mass,
+            init_scale=init_scale,
+            filters=filters,
+            **kwargs,
+        )
+
+        # Initialize channels with a variety of init_scale.
+        t = torch.linspace(1, 1 / channels, channels)
+        init_scale = (init_scale * t**init_scale_gamma).clip(min=0.5)
+        self.quantiles.data = torch.stack(
+            [-init_scale, torch.zeros_like(init_scale), init_scale], dim=-1
+        ).unsqueeze(1)
+
+        assert num_symbols % 2 == 1
+        num_samples = sample_rate * num_symbols + 1
+        symbols_radius = (num_symbols - 1) // 2
+        self.sample_rate = sample_rate
+
+        q_dist = -inv_sigmoid(Tensor([tail_mass / 2])).item()
+        table = (
+            (symbols_radius * q_dist / init_scale)[:, None]
+            * torch.linspace(-1, 1, num_samples)[None, :]
+        ).clip(min=-q_dist * 2, max=q_dist * 2)
+        self.logits_cumulative_table = nn.Parameter(self._deparametrize_table(table))
+
+        # Recommendation: set bounds conservatively to 80% of range.
+        self.logits_cumulative_table_bound = RangeBound(
+            min=int(num_samples * 0.10),
+            max=int(num_samples * 0.90),
+        )
+
+        self.register_buffer(
+            "logits_cumulative_table_offset",
+            torch.full((channels,), -sample_rate * (symbols_radius + 0.5)),
+        )
+
+        self.discrete_indexing = DiscreteIndexing()
+
+        self._update_quantiles()
+
+        self.register_load_state_dict_post_hook(self.load_state_dict_post_hook)
+
+    def _parametrize_table(self, f):
+        # NOTE: Due to implementation details, this is not entirely monotone!
+        return f.cumsum(axis=-1)
+
+    def _deparametrize_table(self, f):
+        return f.diff(axis=-1, prepend=torch.zeros_like(f[..., :1]))
+
+    def _logits_cumulative_discrete(
+        self, inputs: Tensor, stop_gradient: bool, eps=1e-2
+    ) -> Tensor:
+        # f.shape == (C, B)
+        f = self.logits_cumulative_table
+        if stop_gradient:
+            f = f.detach()
+        # Enforce non-decreasing monotonicity:
+        f = self._parametrize_table(f)
+        if stop_gradient:
+            # Ensure target values exist somewhere within table boundaries:
+            b_min = math.ceil(self.logits_cumulative_table_bound.bound_min)
+            b_max = math.floor(self.logits_cumulative_table_bound.bound_max)
+            f[..., :b_min] = f[..., :b_min].clip(max=self.target[0] - eps)
+            f[..., b_max:] = f[..., b_max:].clip(min=self.target[-1] + eps)
+
+        # inputs.shape == (C, 1, -1)
+        q = self.quantiles.squeeze(1)
+        assert inputs.ndim == 3
+        x = self.sample_rate * (inputs.squeeze(1) - q[:, 1, None])
+        x = x - self.logits_cumulative_table_offset.unsqueeze(1)
+        x = self.logits_cumulative_table_bound(x)
+
+        logits = self.discrete_indexing(f, x)
+        logits = logits.unsqueeze(1)
+        return logits
+
+    def load_state_dict_post_hook(self, module, incompatible_keys):
+        missing_keys, _ = incompatible_keys
+        if any(key.endswith("logits_cumulative_table") for key in missing_keys):
+            print("Initializing logits_cumulative_table via continuous model")
+            self.init_logits_cumulative_table_via_continuous()
+
+    @torch.no_grad()
+    def init_logits_cumulative_table_via_continuous(self):
+        """Initialize logits_cumulative_table using the pretrained continuous model."""
+        _, num_samples = self.logits_cumulative_table.shape
+        device = self.logits_cumulative_table.device
+        x = (
+            torch.arange(num_samples, device=device)[None, :]
+            + self.logits_cumulative_table_offset[:, None]
+            - self.quantiles[:, :, 1]
+        ) / self.sample_rate
+        x = x.unsqueeze(1)
+        f = self._logits_cumulative(x, stop_gradient=True, continuous=True).squeeze(1)
+        self.logits_cumulative_table[:] = self._deparametrize_table(f)
 
 
 class GaussianConditional(EntropyModel):
@@ -676,3 +924,137 @@ class GaussianConditional(EntropyModel):
         for s in self.scale_table[:-1]:
             indexes -= (scales <= s).int()
         return indexes
+
+
+@torch.no_grad()
+def pdf_layout(q: torch.Tensor, method="compact"):
+    """Determine discretized PDF layout.
+
+    Returns:
+        - q_indexes: The indexes of the quantiles in the discretized PDF.
+    """
+    assert q.ndim == 2
+    left = (q[:, 1] - q[:, 0]).ceil().long()
+    right = (q[:, 2] - q[:, 1]).ceil().long()
+    zero = torch.zeros_like(left)
+    q_indexes = torch.stack([-left, zero, right], axis=1)
+
+    if method == "none":
+        pass
+    elif method == "compact":
+        # Choose ranges such that the minimum range is used.
+        q_indexes += left
+    elif method == "balanced":
+        # Choose ranges such that the median is centered in the discretized PDF.
+        # Not "space-efficient", but this is easier to work with.
+        q_indexes += max(left.max().item(), right.max().item())
+    else:
+        raise NotImplementedError
+
+    # NOTE: The probability for a symbol centered at y is for a continuous cdf is:
+    # cdf(y + 1/2)[c] - cdf(y - 1/2)[c] == pdf[(y - q[c, 1]).round().long() - offset[c]]
+
+    return q_indexes
+
+
+@torch.no_grad()
+def likelihood_func_to_pdf(
+    likelihood_func,
+    q,
+    q_indexes,
+    symbol_boundaries=None,
+    oob_symbol_pos=None,
+    min_pdf_size=0,
+):
+    device = q.device
+    num_channels = q.shape[0]
+    num_oob_symbols = int(bool(oob_symbol_pos))
+
+    if symbol_boundaries is None:
+        symbol_boundaries = q_indexes
+
+    assert (symbol_boundaries >= 0).all()
+
+    min_symbol = symbol_boundaries[:, 0]
+    max_symbol = symbol_boundaries[:, -1]
+    pdf_max_size = max(min_pdf_size, max_symbol.max().item() + 1 + num_oob_symbols)
+
+    symbols = torch.arange(pdf_max_size, device=device)
+    y_hat = symbols + (q[:, 1, None] - q_indexes[:, 1, None])
+    _, pdf = likelihood_func(y_hat.unsqueeze(0))
+    pdf = pdf.squeeze(0)
+    assert pdf.shape == (num_channels, pdf_max_size)
+
+    # Clip symbols to be within the PDF range.
+    clip_min_mask = symbols >= min_symbol[None, :, None]
+    clip_max_mask = symbols <= max_symbol[None, :, None]
+    pdf = pdf.where(clip_min_mask & clip_max_mask, torch.zeros_like(pdf))
+
+    remainder = (1 - pdf.sum(axis=-1)).clip(min=0)
+
+    _embed_remainder(pdf, remainder, max_symbol, oob_symbol_pos)
+
+    return pdf, remainder
+
+
+@torch.no_grad()
+def y_to_pdf(y, q, q_indexes, symbol_boundaries=None, oob_symbol_pos="adjacent"):
+    n, c, *other_dims = y.shape
+    y = y.reshape((n, c, -1))
+    symbols = (y - q[:, 1, None]).round().long() + q_indexes[:, 1, None]
+
+    if symbol_boundaries is None:
+        symbol_boundaries = q_indexes
+
+    min_symbol = symbol_boundaries[:, 0]
+    max_symbol = symbol_boundaries[:, -1]
+    pdf_max_size = max_symbol.max().item() + 1 + 1
+
+    if oob_symbol_pos is None:
+        raise NotImplementedError
+    elif oob_symbol_pos == "adjacent":
+        oob_symbol = max_symbol[None, :, None] + 1
+    elif oob_symbol_pos == "aligned":
+        oob_symbol = pdf_max_size - 1
+    else:
+        raise NotImplementedError
+
+    # Clip symbols to be within the PDF range.
+    clip_min_mask = symbols >= min_symbol[None, :, None]
+    clip_max_mask = symbols <= max_symbol[None, :, None]
+    symbols = symbols.where(clip_min_mask & clip_max_mask, oob_symbol)
+
+    counts = symbols.new_zeros((n, c, pdf_max_size))
+    counts.scatter_add_(axis=-1, index=symbols, src=torch.ones_like(symbols))
+    total_count = math.prod(other_dims)
+    pdf = counts / total_count
+
+    remainder = _unembed_remainder(pdf, max_symbol, oob_symbol_pos)
+
+    return pdf, remainder
+
+
+def _embed_remainder(pdf, remainder, max_symbol, oob_symbol_pos):
+    if oob_symbol_pos is None:
+        pass
+    elif oob_symbol_pos == "adjacent":
+        pdf[..., max_symbol + 1] = remainder
+    elif oob_symbol_pos == "aligned":
+        pdf[..., -1] = remainder
+    else:
+        raise NotImplementedError
+
+
+def _unembed_remainder(pdf, max_symbol, oob_symbol_pos):
+    if oob_symbol_pos is None:
+        raise NotImplementedError
+    elif oob_symbol_pos == "adjacent":
+        return pdf[..., max_symbol + 1]
+    elif oob_symbol_pos == "aligned":
+        return pdf[..., -1]
+    else:
+        raise NotImplementedError
+
+
+def inv_sigmoid(x):
+    return x.log() - (1 - x).log()

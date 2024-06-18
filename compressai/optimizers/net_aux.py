@@ -44,24 +44,14 @@ def net_aux_optimizer(
     Each optimizer operates on a mutually exclusive set of parameters.
     """
     parameters = {
-        "net": {
-            name
-            for name, param in net.named_parameters()
-            if param.requires_grad and not name.endswith(".quantiles")
-        },
-        "aux": {
-            name
-            for name, param in net.named_parameters()
-            if param.requires_grad and name.endswith(".quantiles")
-        },
+        "net": {name for name, _ in net.named_parameters() if not _is_aux_param(name)},
+        "aux": {name for name, _ in net.named_parameters() if _is_aux_param(name)},
     }
 
     # Make sure we don't have an intersection of parameters
     params_dict = dict(net.named_parameters())
     inter_params = parameters["net"] & parameters["aux"]
-    union_params = parameters["net"] | parameters["aux"]
     assert len(inter_params) == 0
-    assert len(union_params) - len(params_dict.keys()) == 0
 
     def make_optimizer(key):
         kwargs = dict(conf[key])
@@ -72,3 +62,7 @@ def net_aux_optimizer(
     optimizer = {key: make_optimizer(key) for key in ["net", "aux"]}
 
     return cast(Dict[str, optim.Optimizer], optimizer)
+
+
+def _is_aux_param(name: str) -> bool:
+    return name.endswith(".quantiles")

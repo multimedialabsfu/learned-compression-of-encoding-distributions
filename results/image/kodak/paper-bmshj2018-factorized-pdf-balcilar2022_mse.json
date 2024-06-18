@@ -1,0 +1,90 @@
+{
+  "name": "bmshj2018-factorized-pdf-balcilar2022",
+  "description": "",
+  "meta": {
+    "source": "paper",
+    "url": "https://arxiv.org/abs/2209.00964",
+    "type": "image",
+    "dataset": "kodak",
+    "model.name": "bmshj2018-factorized-pdf-balcilar2022",
+    "train_dataset": "vimeo90k",
+    "device": null,
+    "details": "This was constructed by combining the paper figure's percentage rate improvements (given as 'pctdelta-bpp-figure' and 'psnr-rgb-figure') with the pretrained model rate points. For the pretrained rate points, we used the ones measured by us in Ulhaq2024, which are almost the same as the original measurements +/-0.05%. The paper's 'psnr-rgb-figure' measurements are very slightly optimistic, by a few pixels on the plotted figure, though we have 'normalized' this in a fair manner in these transcribed results."
+  },
+  "meta_": {
+    "criterion.lmbda": [
+      0.0018,
+      0.0035,
+      0.0067,
+      0.013,
+      0.025,
+      0.0483,
+      0.0932
+    ]
+  },
+  "results": {
+    "pctdelta-bpp-figure": [
+      -6.731400314677457,
+      -6.10164453435229,
+      -5.752903274144003,
+      -5.517644414475164,
+      -5.522139806698136,
+      -5.84580804675208,
+      -5.285382482954972
+    ],
+    "psnr-rgb-figure": [
+      26.9418645160491,
+      28.244585514782933,
+      29.642830624006283,
+      31.302118794389838,
+      32.973734514330474,
+      35.39178335995257,
+      37.409186844969426
+    ],
+    "bpp": [
+      0.11378769161609349,
+      0.1765289082754177,
+      0.2704891676032067,
+      0.4157223645763093,
+      0.6112717554506631,
+      0.9085879523488424,
+      1.2777001903049374
+    ],
+    "bpp_loss": [
+      0.11414927532335356,
+      0.17673109960424185,
+      0.27079653565975875,
+      0.41544731699096427,
+      0.6114311962875253,
+      0.9088980021029445,
+      1.277940263445958
+    ],
+    "psnr-rgb": [
+      26.91045242316775,
+      28.21812556352313,
+      29.61647762134582,
+      31.27649823070817,
+      32.955705835414605,
+      35.38014316984731,
+      37.39750143589123
+    ],
+    "ms-ssim": [
+      0.9099963282545408,
+      0.9360609774788221,
+      0.9554876560966173,
+      0.9703577011823654,
+      0.9806393558780352,
+      0.9878771578272184,
+      0.9921984871228536
+    ],
+    "ms-ssim-db": [
+      10.659913818041483,
+      12.134976014494896,
+      13.699336796998978,
+      15.449288239081701,
+      17.271445244550705,
+      19.299533516168594,
+      21.22313658396403
+    ]
+  }
+}

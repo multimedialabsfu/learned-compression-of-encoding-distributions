@@ -64,17 +64,19 @@ class EntropyBottleneckLatentCodec(LatentCodec):
     def __init__(
         self,
         entropy_bottleneck: Optional[EntropyBottleneck] = None,
+        dims: Tuple[int, ...] = (-2, -1),
         **kwargs,
     ):
         super().__init__()
         self.entropy_bottleneck = entropy_bottleneck or EntropyBottleneck(**kwargs)
+        self.dims = dims
 
     def forward(self, y: Tensor) -> Dict[str, Any]:
         y_hat, y_likelihoods = self.entropy_bottleneck(y)
         return {"likelihoods": {"y": y_likelihoods}, "y_hat": y_hat}
 
     def compress(self, y: Tensor) -> Dict[str, Any]:
-        shape = y.size()[-2:]
+        shape = tuple(y.shape[d] for d in self.dims)
         y_strings = self.entropy_bottleneck.compress(y)
         y_hat = self.entropy_bottleneck.decompress(y_strings, shape)
         return {"strings": [y_strings], "shape": shape, "y_hat": y_hat}
