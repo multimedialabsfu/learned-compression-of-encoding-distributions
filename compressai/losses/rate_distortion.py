@@ -133,32 +133,3 @@ class AdaptiveRateDistortionLoss(nn.Module):
             return out
         else:
             return out[self.return_type]
-
-
-@register_criterion("PdfRateDistortionLoss")
-class PdfRateDistortionLoss(nn.Module):
-    """Custom rate distortion loss with a Lagrangian parameter."""
-
-    def __init__(self, lmbda=0.01, eps=1e-12):
-        super().__init__()
-        self.lmbda = lmbda
-        self.eps = eps
-
-    def forward(self, output, target):
-        N, *_ = target.shape
-        out = {}
-
-        out["bits_loss"] = sum(
-            likelihoods.log2().sum() / (-N)
-            for likelihoods in output["likelihoods"].values()
-        )
-
-        p = target[:, 0]  # Assumes PDF is the first input data format.
-        p_hat = output["x_hat"]
-        out["kl_loss"] = (
-            p * ((p + self.eps).log2() - (p_hat + self.eps).log2())
-        ).sum() / N
-
-        out["loss"] = out["bits_loss"] + self.lmbda * out["kl_loss"]
-
-        return out

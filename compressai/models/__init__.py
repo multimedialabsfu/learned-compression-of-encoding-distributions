@@ -30,5 +30,4 @@
 from .adaptive import *
 from .base import *
 from .google import *
-from .pdf import *
 from .waseda import *
