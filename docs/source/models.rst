@@ -1,0 +1,53 @@
+compressai.models
+=================
+
+.. currentmodule:: compressai.models
+
+
+CompressionModel
+----------------
+.. autoclass:: CompressionModel
+    :members:
+
+
+SimpleVAECompressionModel
+-------------------------
+.. autoclass:: SimpleVAECompressionModel
+
+
+FactorizedPrior
+----------------
+.. autoclass:: FactorizedPrior
+
+
+ScaleHyperprior
+---------------
+.. autoclass:: ScaleHyperprior
+
+
+MeanScaleHyperprior
+-------------------
+.. autoclass:: MeanScaleHyperprior
+
+
+JointAutoregressiveHierarchicalPriors
+-------------------------------------
+.. autoclass:: JointAutoregressiveHierarchicalPriors
+
+
+Cheng2020Anchor
+---------------
+.. autoclass:: Cheng2020Anchor
+
+
+Cheng2020Attention
+------------------
+.. autoclass:: Cheng2020Attention
+
+
+.. currentmodule:: compressai.models.video
+
+ScaleSpaceFlow
+------------------
+.. autoclass:: ScaleSpaceFlow
+
